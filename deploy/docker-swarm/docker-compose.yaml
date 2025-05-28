@@ -155,8 +155,8 @@ services:
       - LOW_CARDINAL_EXCEPTION_GROUPING=false
     ports:
       # - "1777:1777"     # pprof extension
-      - "4317:4317" # OTLP gRPC receiver
-      - "4318:4318" # OTLP HTTP receiver
+      - "4327:4317" # OTLP gRPC receiver
+      - "4328:4318" # OTLP HTTP receiver
     deploy:
       replicas: 3
     depends_on:
