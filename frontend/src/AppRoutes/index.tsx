@@ -28,6 +28,7 @@ import { QueryBuilderProvider } from 'providers/QueryBuilder';
 import { Suspense, useCallback, useEffect, useState } from 'react';
 import { Route, Router, Switch } from 'react-router-dom';
 import { CompatRouter } from 'react-router-dom-v5-compat';
+import { LicenseStatus } from 'types/api/licensesV3/getActive';
 import { Userpilot } from 'userpilot';
 import { extractDomain } from 'utils/app';
 
@@ -70,7 +71,7 @@ function App(): JSX.Element {
 				const orgName =
 					org && Array.isArray(org) && org.length > 0 ? org[0].displayName : '';
 
-				const { displayName, email, role } = user;
+				const { displayName, email, role, id, orgId } = user;
 
 				const domain = extractDomain(email);
 				const hostNameParts = hostname.split('.');
@@ -104,7 +105,7 @@ function App(): JSX.Element {
 					logEvent('Domain Identified', groupTraits, 'group');
 				}
 				if (window && window.Appcues) {
-					window.Appcues.identify(email, {
+					window.Appcues.identify(id, {
 						name: displayName,
 
 						tenant_id: hostNameParts[0],
@@ -130,7 +131,7 @@ function App(): JSX.Element {
 					isPaidUser: !!trialInfo?.trialConvertedToSubscription,
 				});
 
-				posthog?.identify(email, {
+				posthog?.identify(id, {
 					email,
 					name: displayName,
 					orgName,
@@ -142,7 +143,7 @@ function App(): JSX.Element {
 					isPaidUser: !!trialInfo?.trialConvertedToSubscription,
 				});
 
-				posthog?.group('company', domain, {
+				posthog?.group('company', orgId, {
 					name: orgName,
 					tenant_id: hostNameParts[0],
 					data_region: hostNameParts[1],
@@ -171,11 +172,13 @@ function App(): JSX.Element {
 			user &&
 			!!user.email
 		) {
+			// either the active API returns error with 404 or 501 and if it returns a terminated license means it's on basic plan
 			const isOnBasicPlan =
-				activeLicenseFetchError &&
-				[StatusCodes.NOT_FOUND, StatusCodes.NOT_IMPLEMENTED].includes(
-					activeLicenseFetchError?.getHttpStatusCode(),
-				);
+				(activeLicenseFetchError &&
+					[StatusCodes.NOT_FOUND, StatusCodes.NOT_IMPLEMENTED].includes(
+						activeLicenseFetchError?.getHttpStatusCode(),
+					)) ||
+				(activeLicense?.status && activeLicense.status === LicenseStatus.INVALID);
 			const isIdentifiedUser = getLocalStorageApi(LOCALSTORAGE.IS_IDENTIFIED_USER);
 
 			if (isLoggedInState && user && user.id && user.email && !isIdentifiedUser) {
@@ -191,6 +194,11 @@ function App(): JSX.Element {
 						(route) => route?.path !== ROUTES.BILLING,
 					);
 				}
+
+				if (isEnterpriseSelfHostedUser) {
+					updatedRoutes.push(LIST_LICENSES);
+				}
+
 				// always add support route for cloud users
 				updatedRoutes = [...updatedRoutes, SUPPORT_ROUTE];
 			} else {

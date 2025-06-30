@@ -14,7 +14,6 @@ import (
 	"github.com/SigNoz/signoz/pkg/valuer"
 	"github.com/prometheus/alertmanager/config"
 	commoncfg "github.com/prometheus/common/config"
-	"github.com/prometheus/common/model"
 	"github.com/uptrace/bun"
 )
 
@@ -369,9 +368,6 @@ type ConfigStore interface {
 	// Get returns the config for the given orgID
 	Get(context.Context, string) (*Config, error)
 
-	// ListOrgs returns the list of orgs
-	ListOrgs(context.Context) ([]string, error)
-
 	// CreateChannel creates a new channel.
 	CreateChannel(context.Context, *Channel, ...StoreOption) error
 
@@ -401,5 +397,4 @@ type ConfigStore interface {
 func init() {
 	commoncfg.MarshalSecretValue = true
 	config.MarshalSecretValue = true
-	model.NameValidationScheme = model.UTF8Validation
 }

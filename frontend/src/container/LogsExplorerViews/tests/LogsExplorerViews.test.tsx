@@ -1,17 +1,24 @@
 import ROUTES from 'constants/routes';
+import { useCopyLogLink } from 'hooks/logs/useCopyLogLink';
 import { useGetExplorerQueryRange } from 'hooks/queryBuilder/useGetExplorerQueryRange';
 import { logsQueryRangeSuccessResponse } from 'mocks-server/__mockdata__/logs_query_range';
 import { server } from 'mocks-server/server';
 import { rest } from 'msw';
 import { SELECTED_VIEWS } from 'pages/LogsExplorer/utils';
+import { PreferenceContextProvider } from 'providers/preferences/context/PreferenceContextProvider';
+import { QueryBuilderContext } from 'providers/QueryBuilder';
 import { VirtuosoMockContext } from 'react-virtuoso';
-import { fireEvent, render, RenderResult } from 'tests/test-utils';
+import { fireEvent, render, RenderResult, waitFor } from 'tests/test-utils';
+import { TagFilterItem } from 'types/api/queryBuilder/queryBuilderData';
 
 import LogsExplorerViews from '..';
-import { logsQueryRangeSuccessNewFormatResponse } from './mock';
+import {
+	logsQueryRangeSuccessNewFormatResponse,
+	mockQueryBuilderContextValue,
+} from './mock';
 
 const queryRangeURL = 'http://localhost/api/v3/query_range';
-
+const ACTIVE_LOG_ID = 'test-log-id';
 jest.mock('react-router-dom', () => ({
 	...jest.requireActual('react-router-dom'),
 	useLocation: (): { pathname: string } => ({
@@ -81,6 +88,31 @@ jest.mock('hooks/useSafeNavigate', () => ({
 	}),
 }));
 
+// Mock usePreferenceSync
+jest.mock('providers/preferences/sync/usePreferenceSync', () => ({
+	usePreferenceSync: (): any => ({
+		preferences: {
+			columns: [],
+			formatting: {
+				maxLines: 2,
+				format: 'table',
+				fontSize: 'small',
+				version: 1,
+			},
+		},
+		loading: false,
+		error: null,
+		updateColumns: jest.fn(),
+		updateFormatting: jest.fn(),
+	}),
+}));
+
+jest.mock('hooks/logs/useCopyLogLink', () => ({
+	useCopyLogLink: jest.fn().mockReturnValue({
+		activeLogId: ACTIVE_LOG_ID,
+	}),
+}));
+
 // Set up the specific behavior for useGetExplorerQueryRange in individual test cases
 beforeEach(() => {
 	(useGetExplorerQueryRange as jest.Mock).mockReturnValue({
@@ -93,13 +125,15 @@ const renderer = (): RenderResult =>
 		<VirtuosoMockContext.Provider
 			value={{ viewportHeight: 300, itemHeight: 100 }}
 		>
-			<LogsExplorerViews
-				selectedView={SELECTED_VIEWS.SEARCH}
-				showFrequencyChart
-				setIsLoadingQueries={(): void => {}}
-				listQueryKeyRef={{ current: {} }}
-				chartQueryKeyRef={{ current: {} }}
-			/>
+			<PreferenceContextProvider>
+				<LogsExplorerViews
+					selectedView={SELECTED_VIEWS.SEARCH}
+					showFrequencyChart
+					setIsLoadingQueries={(): void => {}}
+					listQueryKeyRef={{ current: {} }}
+					chartQueryKeyRef={{ current: {} }}
+				/>
+			</PreferenceContextProvider>
 		</VirtuosoMockContext.Provider>,
 	);
 
@@ -161,5 +195,63 @@ describe('LogsExplorerViews -', () => {
 		expect(
 			queryByText('Something went wrong. Please try again or contact support.'),
 		).toBeInTheDocument();
+	});
+
+	it('should add activeLogId filter when present in URL', async () => {
+		// Mock useCopyLogLink to return an activeLogId
+		(useCopyLogLink as jest.Mock).mockReturnValue({
+			activeLogId: ACTIVE_LOG_ID,
+		});
+
+		const originalFiltersLength =
+			mockQueryBuilderContextValue.currentQuery.builder.queryData[0].filters?.items
+				.length || 0;
+
+		lodsQueryServerRequest();
+		render(
+			<QueryBuilderContext.Provider value={mockQueryBuilderContextValue}>
+				<PreferenceContextProvider>
+					<LogsExplorerViews
+						selectedView={SELECTED_VIEWS.SEARCH}
+						showFrequencyChart
+						setIsLoadingQueries={(): void => {}}
+						listQueryKeyRef={{ current: {} }}
+						chartQueryKeyRef={{ current: {} }}
+					/>
+				</PreferenceContextProvider>
+			</QueryBuilderContext.Provider>,
+		);
+
+		await waitFor(() => {
+			const listCall = (useGetExplorerQueryRange as jest.Mock).mock.calls.find(
+				(call) =>
+					call[0] &&
+					call[0].builder.queryData[0].filters.items.length ===
+						originalFiltersLength + 1,
+			);
+
+			expect(listCall).toBeDefined();
+
+			if (listCall) {
+				const { queryData } = listCall[0].builder;
+
+				const firstQuery = queryData[0];
+
+				const expectedFiltersLength = originalFiltersLength + 1; // +1 for activeLogId filter
+
+				// Verify that the activeLogId filter is present
+				expect(
+					firstQuery.filters?.items.some(
+						(item: TagFilterItem) =>
+							item.key?.key === 'id' &&
+							item.op === '<=' &&
+							item.value === ACTIVE_LOG_ID,
+					),
+				).toBe(true);
+
+				// Verify the total number of filters (original + 1 new activeLogId filter)
+				expect(firstQuery.filters?.items.length).toBe(expectedFiltersLength);
+			}
+		});
 	});
 });

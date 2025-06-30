@@ -28,16 +28,12 @@ import LogsExplorerTable from 'container/LogsExplorerTable';
 import { useOptionsMenu } from 'container/OptionsMenu';
 import TimeSeriesView from 'container/TimeSeriesView/TimeSeriesView';
 import dayjs from 'dayjs';
-import { useUpdateDashboard } from 'hooks/dashboard/useUpdateDashboard';
-import { addEmptyWidgetInDashboardJSONWithQuery } from 'hooks/dashboard/utils';
 import { useCopyLogLink } from 'hooks/logs/useCopyLogLink';
 import { useGetExplorerQueryRange } from 'hooks/queryBuilder/useGetExplorerQueryRange';
 import { useGetPanelTypesQueryParam } from 'hooks/queryBuilder/useGetPanelTypesQueryParam';
 import { useQueryBuilder } from 'hooks/queryBuilder/useQueryBuilder';
-import useAxiosError from 'hooks/useAxiosError';
 import useClickOutside from 'hooks/useClickOutside';
 import { useHandleExplorerTabChange } from 'hooks/useHandleExplorerTabChange';
-import { useNotifications } from 'hooks/useNotifications';
 import { useSafeNavigate } from 'hooks/useSafeNavigate';
 import useUrlQueryData from 'hooks/useUrlQueryData';
 import { FlatLogData } from 'lib/logs/flatLogData';
@@ -62,7 +58,8 @@ import {
 	useRef,
 	useState,
 } from 'react';
-import { useSelector } from 'react-redux';
+import { useDispatch, useSelector } from 'react-redux';
+import { UpdateTimeInterval } from 'store/actions';
 import { AppState } from 'store/reducers';
 import { Dashboard } from 'types/api/dashboard/getAll';
 import { ILog } from 'types/api/logs/log';
@@ -98,8 +95,8 @@ function LogsExplorerViews({
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	chartQueryKeyRef: MutableRefObject<any>;
 }): JSX.Element {
-	const { notifications } = useNotifications();
 	const { safeNavigate } = useSafeNavigate();
+	const dispatch = useDispatch();
 
 	// this is to respect the panel type present in the URL rather than defaulting it to list always.
 	const panelTypes = useGetPanelTypesQueryParam(PANEL_TYPES.LIST);
@@ -111,15 +108,15 @@ function LogsExplorerViews({
 		DEFAULT_PER_PAGE_VALUE,
 	);
 
-	const { minTime, maxTime } = useSelector<AppState, GlobalReducer>(
-		(state) => state.globalTime,
-	);
+	const { minTime, maxTime, selectedTime } = useSelector<
+		AppState,
+		GlobalReducer
+	>((state) => state.globalTime);
 
 	const currentMinTimeRef = useRef<number>(minTime);
 
 	// Context
 	const {
-		initialDataSource,
 		currentQuery,
 		stagedQuery,
 		panelType,
@@ -140,8 +137,7 @@ function LogsExplorerViews({
 	const [showFormatMenuItems, setShowFormatMenuItems] = useState(false);
 	const [queryId, setQueryId] = useState<string>(v4());
 	const [queryStats, setQueryStats] = useState<WsDataEvent>();
-
-	const handleAxisError = useAxiosError();
+	const [listChartQuery, setListChartQuery] = useState<Query | null>(null);
 
 	const listQuery = useMemo(() => {
 		if (!stagedQuery || stagedQuery.builder.queryData.length < 1) return null;
@@ -151,7 +147,7 @@ function LogsExplorerViews({
 
 	const { options, config } = useOptionsMenu({
 		storageKey: LOCALSTORAGE.LOGS_LIST_OPTIONS,
-		dataSource: initialDataSource || DataSource.LOGS,
+		dataSource: DataSource.LOGS,
 		aggregateOperator: listQuery?.aggregateOperator || StringOperators.NOOP,
 	});
 
@@ -178,8 +174,11 @@ function LogsExplorerViews({
 		return logs.length >= listQuery.limit;
 	}, [logs.length, listQuery]);
 
-	const listChartQuery = useMemo(() => {
-		if (!stagedQuery || !listQuery) return null;
+	useEffect(() => {
+		if (!stagedQuery || !listQuery) {
+			setListChartQuery(null);
+			return;
+		}
 
 		const modifiedQueryData: IBuilderQuery = {
 			...listQuery,
@@ -195,6 +194,26 @@ function LogsExplorerViews({
 				},
 			],
 			legend: '{{severity_text}}',
+			...(activeLogId && {
+				filters: {
+					...listQuery?.filters,
+					items: [
+						...(listQuery?.filters?.items || []),
+						{
+							id: v4(),
+							key: {
+								key: 'id',
+								type: '',
+								dataType: DataTypes.String,
+								isColumn: true,
+							},
+							op: OPERATORS['<='],
+							value: activeLogId,
+						},
+					],
+					op: 'AND',
+				},
+			}),
 		};
 
 		const modifiedQuery: Query = {
@@ -208,8 +227,8 @@ function LogsExplorerViews({
 			},
 		};
 
-		return modifiedQuery;
-	}, [stagedQuery, listQuery]);
+		setListChartQuery(modifiedQuery);
+	}, [stagedQuery, listQuery, activeLogId]);
 
 	const exportDefaultQuery = useMemo(
 		() =>
@@ -244,6 +263,8 @@ function LogsExplorerViews({
 		{},
 		undefined,
 		chartQueryKeyRef,
+		undefined,
+		'custom',
 	);
 
 	const {
@@ -294,12 +315,12 @@ function LogsExplorerViews({
 			});
 
 			// Add filter for activeLogId if present
-			let updatedFilters = paginateData.filters;
+			let updatedFilters = params.filters;
 			if (activeLogId) {
 				updatedFilters = {
-					...paginateData.filters,
+					...params.filters,
 					items: [
-						...(paginateData.filters?.items || []),
+						...(params.filters?.items || []),
 						{
 							id: v4(),
 							key: {
@@ -396,11 +417,6 @@ function LogsExplorerViews({
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [data?.payload]);
 
-	const {
-		mutate: updateDashboard,
-		isLoading: isUpdateDashboardLoading,
-	} = useUpdateDashboard();
-
 	const getUpdatedQueryForExport = useCallback((): Query => {
 		const updatedQuery = cloneDeep(currentQuery);
 
@@ -424,68 +440,22 @@ function LogsExplorerViews({
 					? getUpdatedQueryForExport()
 					: exportDefaultQuery;
 
-			const updatedDashboard = addEmptyWidgetInDashboardJSONWithQuery(
-				dashboard,
-				query,
-				widgetId,
-				panelTypeParam,
-				options.selectColumns,
-			);
-
 			logEvent('Logs Explorer: Add to dashboard successful', {
 				panelType,
 				isNewDashboard,
 				dashboardName: dashboard?.data?.title,
 			});
 
-			updateDashboard(updatedDashboard, {
-				onSuccess: (data) => {
-					if (data.error) {
-						const message =
-							data.error === 'feature usage exceeded' ? (
-								<span>
-									Panel limit exceeded for {DataSource.LOGS} in community edition. Please
-									checkout our paid plans{' '}
-									<a
-										href="https://signoz.io/pricing/?utm_source=product&utm_medium=dashboard-limit"
-										rel="noreferrer noopener"
-										target="_blank"
-									>
-										here
-									</a>
-								</span>
-							) : (
-								data.error
-							);
-						notifications.error({
-							message,
-						});
-
-						return;
-					}
-
-					const dashboardEditView = generateExportToDashboardLink({
-						query,
-						panelType: panelTypeParam,
-						dashboardId: data.payload?.uuid || '',
-						widgetId,
-					});
-
-					safeNavigate(dashboardEditView);
-				},
-				onError: handleAxisError,
+			const dashboardEditView = generateExportToDashboardLink({
+				query,
+				panelType: panelTypeParam,
+				dashboardId: dashboard.id,
+				widgetId,
 			});
+
+			safeNavigate(dashboardEditView);
 		},
-		[
-			getUpdatedQueryForExport,
-			exportDefaultQuery,
-			options.selectColumns,
-			safeNavigate,
-			notifications,
-			panelType,
-			updateDashboard,
-			handleAxisError,
-		],
+		[getUpdatedQueryForExport, exportDefaultQuery, safeNavigate, panelType],
 	);
 
 	useEffect(() => {
@@ -541,6 +511,16 @@ function LogsExplorerViews({
 			requestData?.id !== stagedQuery?.id ||
 			currentMinTimeRef.current !== minTime
 		) {
+			// Recalculate global time when query changes i.e. stage and run query clicked
+			if (
+				!!requestData?.id &&
+				stagedQuery?.id &&
+				requestData?.id !== stagedQuery?.id &&
+				selectedTime !== 'custom'
+			) {
+				dispatch(UpdateTimeInterval(selectedTime));
+			}
+
 			const newRequestData = getRequestData(stagedQuery, {
 				filters: listQuery?.filters || initialFilters,
 				page: 1,
@@ -562,6 +542,9 @@ function LogsExplorerViews({
 		activeLogId,
 		panelType,
 		selectedView,
+		dispatch,
+		selectedTime,
+		maxTime,
 	]);
 
 	const chartData = useMemo(() => {
@@ -811,7 +794,6 @@ function LogsExplorerViews({
 			<ExplorerOptionWrapper
 				disabled={!stagedQuery}
 				query={exportDefaultQuery}
-				isLoading={isUpdateDashboardLoading}
 				onExport={handleExport}
 				sourcepage={DataSource.LOGS}
 			/>

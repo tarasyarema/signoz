@@ -21,8 +21,11 @@ import { FORBID_DOM_PURIFY_TAGS } from 'utils/app';
 
 import { DataType } from '../TableView';
 import {
+	escapeHtml,
 	filterKeyForField,
+	getFieldAttributes,
 	jsonToDataNodes,
+	parseFieldValue,
 	recursiveParseJSON,
 	removeEscapeCharacters,
 	unescapeString,
@@ -43,6 +46,7 @@ interface ITableViewActionsProps {
 		operator: string,
 		fieldKey: string,
 		fieldValue: string,
+		dataType: string | undefined,
 	) => () => void;
 }
 
@@ -62,6 +66,7 @@ export function TableViewActions(
 	} = props;
 
 	const { pathname } = useLocation();
+	const { dataType } = getFieldAttributes(record.field);
 
 	// there is no option for where clause in old logs explorer and live logs page
 	const isOldLogsExplorerOrLiveLogsPage = useMemo(
@@ -85,7 +90,7 @@ export function TableViewActions(
 		record.field === 'body'
 			? {
 					__html: convert.toHtml(
-						dompurify.sanitize(unescapeString(record.value), {
+						dompurify.sanitize(unescapeString(escapeHtml(record.value)), {
 							FORBID_TAGS: [...FORBID_DOM_PURIFY_TAGS],
 						}),
 					),
@@ -155,7 +160,12 @@ export function TableViewActions(
 									<ArrowDownToDot size={14} style={{ transform: 'rotate(90deg)' }} />
 								)
 							}
-							onClick={onClickHandler(OPERATORS['='], fieldFilterKey, fieldData.value)}
+							onClick={onClickHandler(
+								OPERATORS['='],
+								fieldFilterKey,
+								parseFieldValue(fieldData.value),
+								dataType,
+							)}
 						/>
 					</Tooltip>
 					<Tooltip title="Filter out value">
@@ -171,7 +181,8 @@ export function TableViewActions(
 							onClick={onClickHandler(
 								OPERATORS['!='],
 								fieldFilterKey,
-								fieldData.value,
+								parseFieldValue(fieldData.value),
+								dataType,
 							)}
 						/>
 					</Tooltip>
